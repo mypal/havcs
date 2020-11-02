@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'dueros'
 LOGGER_NAME = 'dueros'
 
-def createHandler(hass, entry):
+async def createHandler(hass, entry):
     mode = ['handler']
     return VoiceControlDueros(hass, mode, entry)
 
@@ -24,7 +24,8 @@ class PlatformParameter:
         'humidity': 'humidity',
         'pm25': 'pm2.5',
         'co2': 'co2',
-        'power_state': 'turnOnState'
+        'power_state': 'turnOnState',
+        'mode': 'mode'
     }
     device_action_map_h2p ={
         'turn_on': 'turnOn',
@@ -43,6 +44,7 @@ class PlatformParameter:
         # 'query_power_state': 'getTurnOnState',
         'query_temperature': 'getTemperatureReading',
         'query_humidity': 'getHumidity',
+        'set_mode': 'setMode'
         # '': 'QueryWindSpeed',
         # '': 'QueryBrightness',
         # '': 'QueryFog',
@@ -106,6 +108,10 @@ class PlatformParameter:
         }
 
     _service_map_p2h = {
+        # 模式和平台设备类型不影响
+        'fan': {
+            'SetModeRequest': lambda state, attributes, payload: (['fan'], ['set_speed'], [{"speed": payload['mode']['value'].lower()}])
+        },
         'cover': {
             'TurnOnRequest':  'open_cover',
             'TurnOffRequest': 'close_cover',
@@ -178,7 +184,7 @@ class VoiceControlDueros(PlatformParameter, VoiceControlProcessor):
         }
         return {'errorCode': error_code_map.get(errorCode, 'undefined'), 'message': messsage if messsage else messages.get(errorCode, 'undefined')}
 
-    async def handleRequest(self, data, auth = False):
+    async def handleRequest(self, data, auth = False, request_from = "http"):
         """Handle request"""
         _LOGGER.info("[%s] Handle Request:\n%s", LOGGER_NAME, data)
 
@@ -193,7 +199,7 @@ class VoiceControlDueros(PlatformParameter, VoiceControlProcessor):
             namespace = header['namespace']
             if namespace == 'DuerOS.ConnectedHome.Discovery':
                 action = 'DiscoverAppliancesResponse'
-                err_result, discovery_devices, entity_ids = self.process_discovery_command()
+                err_result, discovery_devices, entity_ids = self.process_discovery_command(request_from)
                 result = {'discoveredAppliances': discovery_devices}
                 if DATA_HAVCS_BIND_MANAGER in self._hass.data[INTEGRATION]:
                     await self._hass.data[INTEGRATION][DATA_HAVCS_BIND_MANAGER].async_save_changed_devices(entity_ids, DOMAIN, p_user_id)
@@ -239,8 +245,8 @@ class VoiceControlDueros(PlatformParameter, VoiceControlProcessor):
         for device_property in device_properties:
             name = self.device_attribute_map_h2p.get(device_property.get('attribute'))
             state = self._hass.states.get(device_property.get('entity_id'))
-            if name and state:
-                value = state.state
+            if name:
+                value = state.state if state else 'unavailable'
                 if name == 'temperature':
                     scale = 'CELSIUS'
                     legalValue = 'DOUBLE'
@@ -260,12 +266,15 @@ class VoiceControlDueros(PlatformParameter, VoiceControlProcessor):
                     scale = 'ppm'
                     legalValue = 'INTEGER'
                 elif name == 'turnOnState':
-                    if state.state != 'off':
-                        value = 'ON'
-                    else:
+                    if value != 'on':
                         value = 'OFF'
+                    else:
+                        value = 'ON'
                     scale = ''
                     legalValue = '(ON, OFF)'
+                elif name == 'mode':
+                    scale = ''
+                    legalValue = '(POWERFUL, NORMAL, QUIET)'
                 else:
                     _LOGGER.warning("[%s] %s has unsport attribute %s", LOGGER_NAME, device_property.get('entity_id'), name)
                     continue
@@ -288,7 +297,8 @@ class VoiceControlDueros(PlatformParameter, VoiceControlProcessor):
         return list(set(actions))
 
     def _discovery_process_device_type(self, raw_device_type):
-        return self.device_type_map_h2p.get(raw_device_type)
+        # raw_device_type guess from device_id's domain transfer to platform style
+        return raw_device_type if raw_device_type in self._device_type_alias else self.device_type_map_h2p.get(raw_device_type)
 
     def _discovery_process_device_info(self, device_id,  device_type, device_name, zone, properties, actions):
         return {

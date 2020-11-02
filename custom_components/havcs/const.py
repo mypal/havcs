@@ -17,6 +17,7 @@ DATA_HAVCS_MQTT = 'mqtt'
 DATA_HAVCS_BIND_MANAGER = 'bind_manager'
 DATA_HAVCS_HTTP_MANAGER = 'http_manager'
 DATA_HAVCS_ITEMS = 'items'
+DATA_HAVCS_SETTINGS = 'settings'
 DATA_HAVCS_HANDLER = 'handler'
 
 CONF_BROKER = 'broker'
@@ -34,6 +35,7 @@ CONF_PROXY_URL = 'proxy_url'
 CONF_SKIP_TEST  = 'skip_test'
 CONF_DEVICE_CONFIG = 'device_config'
 CONF_DEVICE_CONFIG_PATH = 'device_config_path'
+CONF_SETTINGS_CONFIG_PATH = 'settings_config_path'
 
 CONF_MODE = 'mode'
 
@@ -81,6 +83,10 @@ DEVICE_PLATFORM_DICT = {
     }
 }
 DEVICE_TYPE_DICT = {
+    'airpurifier': {
+        'cn_name': '空气净化器',
+        'icon': 'mdi-air-conditioner'
+    },
     'climate': {
         'cn_name': '空调',
         'icon': 'mdi-air-conditioner'
@@ -138,10 +144,27 @@ DEVICE_ACTION_DICT ={
     },
     'decrease_brightness': {
         'cn_name': '调低亮度'
+    },
+    'set_mode': {
+        'cn_name': '设置模式'
+    },
+    'play': {
+        'cn_name': '播放'
+    },
+    'pause': {
+        'cn_name': '暂停'
+    },
+    'continue': {
+        'cn_name': '继续'
     }
 }
 
 DEVICE_ATTRIBUTE_DICT = {
+    'power_state': {
+        'scale': '',
+        'legalValue': '(ON, OFF)',
+        'cn_name': '电源'
+    },    
     'temperature': {
         'scale': '°C',
         'legalValue': 'DOUBLE',
@@ -177,9 +200,9 @@ DEVICE_ATTRIBUTE_DICT = {
         'legalValue': 'INTEGER',
         'cn_name': '二氧化碳浓度'
     },
-    'power_state': {
+    'mode': {
         'scale': '',
-        'legalValue': '(on, off)',
-        'cn_name': '电源'
-    }   
+        'legalValue': '',
+        'cn_name': '工作模式'
+    },  
 }

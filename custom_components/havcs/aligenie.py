@@ -2,6 +2,8 @@ import json
 from urllib.request import urlopen
 import logging
 
+import async_timeout
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .util import decrypt_device_id, encrypt_device_id
 from .helper import VoiceControlProcessor, VoiceControlDeviceManager
 from .const import ATTR_DEVICE_ACTIONS
@@ -12,9 +14,26 @@ LOGGER_NAME = 'aligenie'
 
 DOMAIN = 'aligenie'
 
-def createHandler(hass, entry):
+async def createHandler(hass, entry):
     mode = ['handler']
-    return VoiceControlAligenie(hass, mode, entry)
+    try:
+        placelist_url = 'https://open.bot.tmall.com/oauth/api/placelist'
+        aliaslist_url = 'https://open.bot.tmall.com/oauth/api/aliaslist'
+        session = async_get_clientsession(hass, verify_ssl=False)
+        with async_timeout.timeout(5, loop=hass.loop):
+            response = await session.get(placelist_url)
+        placelist  = (await response.json())['data']
+        with async_timeout.timeout(5, loop=hass.loop):
+            response = await session.get(aliaslist_url)
+        aliaslist = (await response.json())['data']
+        placelist.append({'key': '电视', 'value': ['电视机']})
+        aliaslist.append({'key': '传感器', 'value': ['传感器']})
+    except:
+        placelist = []
+        aliaslist = []
+        import traceback
+        _LOGGER.info("[%s] can get places and aliases data from website, set None.\n%s", LOGGER_NAME, traceback.format_exc())
+    return VoiceControlAligenie(hass, mode, entry, placelist, aliaslist)
 
 class PlatformParameter:
     device_attribute_map_h2p = {
@@ -39,10 +58,13 @@ class PlatformParameter:
         'set_temperature': 'SetTemperature',
         'set_color': 'SetColor',
         'pause': 'Pause',
+        'continue': 'Continue',
+        'play': 'Play',
         'query_color': 'QueryColor',
         'query_power_state': 'QueryPowerState',
         'query_temperature': 'QueryTemperature',
         'query_humidity': 'QueryHumidity',
+        'set_mode': 'SetMode'
         # '': 'QueryWindSpeed',
         # '': 'QueryBrightness',
         # '': 'QueryFog',
@@ -110,6 +132,16 @@ class PlatformParameter:
         }
 
     _service_map_p2h = {
+        # 测试，暂无找到播放指定音乐话术，继续播放指令都是Play
+        # 'media_player': {
+        #     'Play': lambda state, attributes, payload: (['play_media'], ['play_media'], [{"media_content_id": payload['value'], "media_content_type": "playlist"}]),
+        #     'Pause': 'media_pause',
+        #     'Continue': 'media_play'
+        # },
+        # 模式和平台设备类型有关，自动模式 静音模式 睡眠风模式（fan类型） 睡眠模式（airpurifier类型）
+        'fan': {
+            'SetMode': lambda state, attributes, payload: (['fan'], ['set_speed'], [{"speed": payload['value']}])
+        },
         'cover': {
             'TurnOn':  'open_cover',
             'TurnOff': 'close_cover',
@@ -141,19 +173,21 @@ class PlatformParameter:
     }
 
 class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
-    def __init__(self, hass, mode, entry):
+    def __init__(self, hass, mode, entry, zone_constraints, device_name_constraints):
         self._hass = hass
         self._mode = mode
-        try:
-            self._zone_constraints  = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/placelist').read().decode('utf-8'))['data']
-            self._device_name_constraints = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/aliaslist').read().decode('utf-8'))['data']
-            self._device_name_constraints.append({'key': '电视', 'value': ['电视机']})
-            self._device_name_constraints.append({'key': '传感器', 'value': ['传感器']})
-        except:
-            self._zone_constraints = []
-            self._device_name_constraints = []
-            import traceback
-            _LOGGER.info("[%s] can get places and aliases data from website, set None.\n%s", LOGGER_NAME, traceback.format_exc())
+        self._zone_constraints = zone_constraints
+        self._device_name_constraints = device_name_constraints
+        # try:
+        #     self._zone_constraints  = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/placelist').read().decode('utf-8'))['data']
+        #     self._device_name_constraints = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/aliaslist').read().decode('utf-8'))['data']
+        #     self._device_name_constraints.append({'key': '电视', 'value': ['电视机']})
+        #     self._device_name_constraints.append({'key': '传感器', 'value': ['传感器']})
+        # except:
+        #     self._zone_constraints = []
+        #     self._device_name_constraints = []
+        #     import traceback
+        #     _LOGGER.info("[%s] can get places and aliases data from website, set None.\n%s", LOGGER_NAME, traceback.format_exc())
         self.vcdm = VoiceControlDeviceManager(entry, DOMAIN, self.device_action_map_h2p, self.device_attribute_map_h2p, self._service_map_p2h, self.device_type_map_h2p, self._device_type_alias, self._device_name_constraints, self._zone_constraints)
 
     def _errorResult(self, errorCode, messsage=None):
@@ -169,7 +203,7 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
         }
         return {'errorCode': errorCode, 'message': messsage if messsage else messages[errorCode]}
 
-    async def handleRequest(self, data, auth = False):
+    async def handleRequest(self, data, auth = False, request_from = "http"):
         """Handle request"""
         _LOGGER.info("[%s] Handle Request:\n%s", LOGGER_NAME, data)
 
@@ -182,7 +216,7 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
 
         if auth:
             if namespace == 'AliGenie.Iot.Device.Discovery':
-                err_result, discovery_devices, entity_ids = self.process_discovery_command()
+                err_result, discovery_devices, entity_ids = self.process_discovery_command(request_from)
                 content = {'devices': discovery_devices}
             elif namespace == 'AliGenie.Iot.Device.Control':
                 err_result, content = await self.process_control_command(data)
@@ -233,8 +267,9 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
         for device_property in device_properties:
             name = self.device_attribute_map_h2p.get(device_property.get('attribute'))
             state = self._hass.states.get(device_property.get('entity_id'))
-            if name and state:
-                properties += [{'name': name.lower(), 'value': state.state}]
+            if name:
+                value = state.state if state else 'unavailable'
+                properties += [{'name': name.lower(), 'value': value}]
         return properties if properties else [{'name': 'powerstate', 'value': 'off'}]
     
     def _discovery_process_actions(self, device_properties, raw_actions):
@@ -252,7 +287,8 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
         return list(set(actions))
 
     def _discovery_process_device_type(self, raw_device_type):
-        return self.device_type_map_h2p.get(raw_device_type)
+        # raw_device_type guess from device_id's domain transfer to platform style
+        return raw_device_type if raw_device_type in self._device_type_alias else self.device_type_map_h2p.get(raw_device_type)
 
     def _discovery_process_device_info(self, device_id,  device_type, device_name, zone, properties, actions):
         return {
